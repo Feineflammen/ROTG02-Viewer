@@ -13,6 +13,7 @@ object NativeUvcStream {
         System.loadLibrary("rotg02native")
     }
 
+    external fun prepareStream()
     external fun runStream(fileDescriptor: Int, sink: FrameSink): String
     external fun stopStream()
 }
