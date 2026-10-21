@@ -1,4 +1,4 @@
-# ROTG02 Viewer 1.0.1
+# ROTG02 Viewer 1.0.2
 
 Schlanker Android-FPV-Viewer für den Eachine ROTG02 (VID:PID 18EC:5850).
 
@@ -58,8 +58,8 @@ GitHub Actions baut mit:
 
 Artifact:
 
-- `ROTG02-Viewer-v1.0.1-release.apk`
-- `ROTG02-Viewer-v1.0.1-release.apk.sha256`
+- `ROTG02-Viewer-v1.0.2-release.apk`
+- `ROTG02-Viewer-v1.0.2-release.apk.sha256`
 
 ## Berechtigungen
 
@@ -97,3 +97,22 @@ ein dauerhaft geschützter eigener Release-Signing-Key verwendet werden.
 
 Eine bestandene statische Prüfung beweist nicht, dass ein Virenscanner niemals einen
 Fehlalarm erzeugt. Bei einer erneuten Malware-Warnung die APK weiterhin nicht installieren.
+
+
+## 1.0.2 Frame-Integrität
+
+Einzelne sichtbar halb schwarze/weiße Frames werden nicht mehr nur anhand von
+JPEG SOI/EOI zusammengesetzt. Der native Assembler wertet jetzt die UVC-eigenen
+Framegrenzen aus:
+
+- FID-Wechsel startet einen neuen UVC-Frame.
+- Fehlt beim FID-Wechsel das vorherige EOF, wird der unvollständige Frame verworfen.
+- EOF beendet genau den aktuellen UVC-Frame.
+- Nur Frames, die innerhalb derselben UVC-Grenze mit JPEG SOI beginnen und mit
+  JPEG EOI enden, werden an Android weitergegeben.
+- Paket-, UVC-Header- und Oversize-Fehler markieren den aktuellen Frame als
+  unbrauchbar.
+- Verworfene Frames ersetzen das angezeigte Bild nicht. Der letzte gültige Frame
+  bleibt stehen, bis der nächste vollständige Frame eintrifft.
+
+Der Recorder erhält dieselben validierten Frames wie die Anzeige.
