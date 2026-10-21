@@ -161,57 +161,61 @@ bool submitUrb(int fd, UrbContext& ctx, std::ostringstream& out) {
     return true;
 }
 
-class JpegAssembler {
+class UvcJpegAssembler {
 public:
-    JpegAssembler() {
+    UvcJpegAssembler() {
         frame_.reserve(kMaxFrameBytes);
     }
 
-    void reset() {
-        frame_.clear();
-        inFrame_ = false;
-        outsidePrevFF_ = false;
+    void markCurrentCorrupt() {
+        if (haveFid_) {
+            frameBad_ = true;
+        }
     }
 
-    void consume(
+    void consumePacket(
+        uint8_t fid,
+        bool eof,
         const uint8_t* data,
         size_t len,
         JNIEnv* env,
         jobject sink,
         jmethodID callback
     ) {
-        for (size_t i = 0; i < len; ++i) {
-            const uint8_t b = data[i];
-
-            if (!inFrame_) {
-                if (outsidePrevFF_ && b == 0xd8) {
-                    frame_.clear();
-                    frame_.push_back(0xff);
-                    frame_.push_back(0xd8);
-                    inFrame_ = true;
-                    outsidePrevFF_ = false;
-                    continue;
-                }
-                outsidePrevFF_ = (b == 0xff);
-                continue;
+        if (!haveFid_) {
+            beginFrame(fid);
+        } else if (fid != currentFid_) {
+            if (!frame_.empty() || frameBad_) {
+                ++incompleteDrops_;
             }
+            beginFrame(fid);
+        }
 
-            frame_.push_back(b);
-
-            if (frame_.size() > kAssemblerMaxBytes) {
+        if (!frameBad_ && len > 0) {
+            if (frame_.size() + len > kAssemblerMaxBytes) {
                 ++oversizeDrops_;
-                reset();
-                continue;
-            }
-
-            const size_t n = frame_.size();
-            if (n >= 2 && frame_[n - 2] == 0xff && frame_[n - 1] == 0xd9) {
-                deliver(env, sink, callback);
                 frame_.clear();
-                inFrame_ = false;
-                outsidePrevFF_ = false;
+                frameBad_ = true;
+            } else {
+                frame_.insert(frame_.end(), data, data + len);
             }
         }
+
+        if (!eof) {
+            return;
+        }
+
+        if (frameBad_) {
+            ++corruptDrops_;
+        } else if (isCompleteJpeg()) {
+            deliver(env, sink, callback);
+        } else {
+            ++invalidJpegDrops_;
+        }
+
+        frame_.clear();
+        frameBad_ = false;
+        haveFid_ = false;
     }
 
     uint64_t deliveredFrames() const {
@@ -226,10 +230,35 @@ public:
         return oversizeDrops_;
     }
 
-private:
-    void deliver(JNIEnv* env, jobject sink, jmethodID callback) {
-        if (frame_.empty()) return;
+    uint64_t incompleteDrops() const {
+        return incompleteDrops_;
+    }
 
+    uint64_t corruptDrops() const {
+        return corruptDrops_;
+    }
+
+    uint64_t invalidJpegDrops() const {
+        return invalidJpegDrops_;
+    }
+
+private:
+    void beginFrame(uint8_t fid) {
+        frame_.clear();
+        currentFid_ = fid;
+        haveFid_ = true;
+        frameBad_ = false;
+    }
+
+    bool isCompleteJpeg() const {
+        return frame_.size() >= 4 &&
+               frame_[0] == 0xff &&
+               frame_[1] == 0xd8 &&
+               frame_[frame_.size() - 2] == 0xff &&
+               frame_[frame_.size() - 1] == 0xd9;
+    }
+
+    void deliver(JNIEnv* env, jobject sink, jmethodID callback) {
         jbyteArray array = env->NewByteArray(static_cast<jsize>(frame_.size()));
         if (array == nullptr) {
             if (env->ExceptionCheck()) env->ExceptionClear();
@@ -264,11 +293,15 @@ private:
     }
 
     std::vector<uint8_t> frame_;
-    bool inFrame_ = false;
-    bool outsidePrevFF_ = false;
+    uint8_t currentFid_ = 0;
+    bool haveFid_ = false;
+    bool frameBad_ = false;
     uint64_t deliveredFrames_ = 0;
     uint64_t callbackErrors_ = 0;
     uint64_t oversizeDrops_ = 0;
+    uint64_t incompleteDrops_ = 0;
+    uint64_t corruptDrops_ = 0;
+    uint64_t invalidJpegDrops_ = 0;
 };
 
 struct Metrics {
@@ -440,7 +473,7 @@ std::string runStream(JNIEnv* env, int javaFd, jobject sink) {
         << " (" << kPacketsPerUrb << " Pakete/URB)\n";
 
     Metrics metrics;
-    JpegAssembler assembler;
+    UvcJpegAssembler assembler;
     bool fatal = false;
     bool deviceGone = false;
     const auto start = std::chrono::steady_clock::now();
@@ -486,7 +519,7 @@ std::string runStream(JNIEnv* env, int javaFd, jobject sink) {
 
             if (desc.status != 0) {
                 ++metrics.packetErrors;
-                assembler.reset();
+                assembler.markCurrentCorrupt();
                 continue;
             }
 
@@ -498,7 +531,7 @@ std::string runStream(JNIEnv* env, int javaFd, jobject sink) {
 
             if (actual < 2) {
                 ++metrics.invalidHeaders;
-                assembler.reset();
+                assembler.markCurrentCorrupt();
                 continue;
             }
 
@@ -507,20 +540,24 @@ std::string runStream(JNIEnv* env, int javaFd, jobject sink) {
 
             if (headerLen < 2 || headerLen > actual) {
                 ++metrics.invalidHeaders;
-                assembler.reset();
+                assembler.markCurrentCorrupt();
                 continue;
             }
 
             if ((flags & 0x40u) != 0) {
                 ++metrics.uvcErrorHeaders;
-                assembler.reset();
+                assembler.markCurrentCorrupt();
                 continue;
             }
 
             const size_t payloadLen = actual - headerLen;
             if (payloadLen > 0) {
                 metrics.payloadBytes += payloadLen;
-                assembler.consume(
+                const uint8_t fid = flags & 0x01u;
+                const bool eof = (flags & 0x02u) != 0;
+                assembler.consumePacket(
+                    fid,
+                    eof,
                     packet + headerLen,
                     payloadLen,
                     env,
@@ -587,6 +624,9 @@ std::string runStream(JNIEnv* env, int javaFd, jobject sink) {
         << ", uvcErrors=" << metrics.uvcErrorHeaders
         << ", callbackErrors=" << assembler.callbackErrors()
         << ", oversizeDrops=" << assembler.oversizeDrops()
+        << ", incompleteDrops=" << assembler.incompleteDrops()
+        << ", corruptDrops=" << assembler.corruptDrops()
+        << ", invalidJpegDrops=" << assembler.invalidJpegDrops()
         << ", fatal=" << (fatal ? "true" : "false")
         << ", deviceGone=" << (deviceGone ? "true" : "false")
         << "\n";
