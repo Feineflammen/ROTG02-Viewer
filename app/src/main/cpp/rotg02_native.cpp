@@ -27,7 +27,7 @@ constexpr int kUrbCount = 8;
 constexpr uint32_t kFrameInterval100ns = 333333;
 constexpr uint32_t kMaxFrameBytes = 640u * 480u * 2u;
 constexpr uint32_t kRequestedPayloadBytes = 3000;
-constexpr size_t kAssemblerMaxBytes = 1024u * 1024u;
+constexpr size_t kAssemblerMaxBytes = kMaxFrameBytes;
 
 constexpr uint8_t UVC_SET_CUR = 0x01;
 constexpr uint8_t UVC_GET_CUR = 0x81;
@@ -553,18 +553,19 @@ std::string runStream(JNIEnv* env, int javaFd, jobject sink) {
             const size_t payloadLen = actual - headerLen;
             if (payloadLen > 0) {
                 metrics.payloadBytes += payloadLen;
-                const uint8_t fid = flags & 0x01u;
-                const bool eof = (flags & 0x02u) != 0;
-                assembler.consumePacket(
-                    fid,
-                    eof,
-                    packet + headerLen,
-                    payloadLen,
-                    env,
-                    sink,
-                    callback
-                );
             }
+
+            const uint8_t fid = flags & 0x01u;
+            const bool eof = (flags & 0x02u) != 0;
+            assembler.consumePacket(
+                fid,
+                eof,
+                packet + headerLen,
+                payloadLen,
+                env,
+                sink,
+                callback
+            );
         }
 
         if (
