@@ -7,12 +7,12 @@
 
     <uses-permission android:name="android.permission.CAMERA" />
 
-    <!-- Kein Internet, kein Mikrofon, keine Storage-Berechtigung. -->
+    <!-- No internet, microphone, or broad storage permissions. -->
 
     <application
         android:allowBackup="false"
         android:icon="@drawable/ic_launcher"
-        android:label="ROTG02 Viewer"
+        android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false">
