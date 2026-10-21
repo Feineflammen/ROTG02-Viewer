@@ -44,7 +44,7 @@ class Mp4Recorder(
 
     @Synchronized
     fun start(): String {
-        check(codec == null) { "Recorder läuft bereits" }
+        check(codec == null) { "Recorder is already running" }
 
         var createdCodec: MediaCodec? = null
         try {
@@ -91,7 +91,7 @@ class Mp4Recorder(
         val c = codec ?: return false
         if (bitmap.width != width || bitmap.height != height) {
             throw IllegalArgumentException(
-                "Unerwartete Framegröße ${bitmap.width}x${bitmap.height}, erwartet ${width}x${height}"
+                "Unexpected frame size ${bitmap.width}x${bitmap.height}, expected ${width}x${height}"
             )
         }
 
@@ -106,7 +106,7 @@ class Mp4Recorder(
         val image = c.getInputImage(inputIndex)
         if (image == null) {
             c.queueInputBuffer(inputIndex, 0, 0, nextPtsUs(timestampNs), 0)
-            throw IllegalStateException("H.264-Encoder liefert kein YUV420-Input-Image")
+            throw IllegalStateException("H.264 encoder did not provide a YUV420 input image")
         }
 
         try {
@@ -173,7 +173,7 @@ class Mp4Recorder(
             drainEncoder(endOfStream = false)
             attempts++
         }
-        throw IllegalStateException("Kein Encoder-Inputbuffer für EOS")
+        throw IllegalStateException("No encoder input buffer available for EOS")
     }
 
     private fun drainEncoder(endOfStream: Boolean) {
@@ -192,7 +192,7 @@ class Mp4Recorder(
 
                 outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                     if (muxerStarted) {
-                        throw IllegalStateException("Encoderformat wurde zweimal geändert")
+                        throw IllegalStateException("Encoder output format changed twice")
                     }
                     trackIndex = m.addTrack(c.outputFormat)
                     m.start()
@@ -208,7 +208,7 @@ class Mp4Recorder(
                     if (bufferInfo.size > 0) {
                         if (!muxerStarted || outputBuffer == null) {
                             c.releaseOutputBuffer(outputIndex, false)
-                            throw IllegalStateException("Encoder liefert Daten vor Muxer-Start")
+                            throw IllegalStateException("Encoder produced data before muxer start")
                         }
                         outputBuffer.position(bufferInfo.offset)
                         outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
@@ -229,7 +229,7 @@ class Mp4Recorder(
         bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
 
         val planes = image.planes
-        if (planes.size < 3) throw IllegalStateException("YUV420-Image hat weniger als 3 Ebenen")
+        if (planes.size < 3) throw IllegalStateException("YUV420 image has fewer than three planes")
 
         val yPlane = planes[0]
         val uPlane = planes[1]
@@ -318,11 +318,11 @@ class Mp4Recorder(
             }
             val resolver = context.contentResolver
             val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
-                ?: throw IllegalStateException("MediaStore konnte keine Videodatei anlegen")
+                ?: throw IllegalStateException("MediaStore could not create a video file")
             val pfd = resolver.openFileDescriptor(uri, "rw")
                 ?: run {
                     resolver.delete(uri, null, null)
-                    throw IllegalStateException("MediaStore-Datei konnte nicht geöffnet werden")
+                    throw IllegalStateException("MediaStore file could not be opened")
                 }
             return try {
                 val muxer = MediaMuxer(pfd.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
@@ -337,7 +337,7 @@ class Mp4Recorder(
         val base = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: context.filesDir
         val dir = File(base, "ROTG02")
         if (!dir.exists() && !dir.mkdirs()) {
-            throw IllegalStateException("Aufnahmeordner konnte nicht angelegt werden")
+            throw IllegalStateException("Recording directory could not be created")
         }
         val file = File(dir, name)
         val muxer = MediaMuxer(file.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
