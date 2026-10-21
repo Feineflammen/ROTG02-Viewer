@@ -305,7 +305,11 @@ std::string runStream(JNIEnv* env, int javaFd, jobject sink) {
         return out.str();
     }
 
-    gStopRequested.store(false, std::memory_order_release);
+    if (gStopRequested.load(std::memory_order_acquire)) {
+        close(fd);
+        out << "Streamstart vor UVC-Setup abgebrochen\n";
+        return out.str();
+    }
 
     bool streamingAlt = false;
     std::vector<UrbContext> urbs(kUrbCount);
@@ -592,6 +596,15 @@ std::string runStream(JNIEnv* env, int javaFd, jobject sink) {
 }
 
 }  // namespace
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_de_feineflammen_rotg02viewer_NativeUvcStream_prepareStream(
+    JNIEnv*,
+    jobject
+) {
+    gStopRequested.store(false, std::memory_order_release);
+}
 
 extern "C"
 JNIEXPORT jstring JNICALL
