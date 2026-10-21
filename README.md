@@ -1,118 +1,156 @@
-# ROTG02 Viewer 1.0.2
+# ROTG02 Viewer
 
-Schlanker Android-FPV-Viewer für den Eachine ROTG02 (VID:PID 18EC:5850).
+A focused Android FPV viewer for the **Eachine ROTG02** USB receiver (`VID:PID 18EC:5850`).
 
-## Funktionen
+The app uses a small native UVC/USB isochronous transport written specifically for the ROTG02 instead of a general-purpose UVC framework.
 
-- automatische ROTG02-Erkennung im laufenden Betrieb
-- explizite Android-USB-Permission
-- eigener nativer UVC/ISO-Transport über Linux usbfs/JNI
-- 640×480 MJPEG
-- Livebild in Hoch- und Querformat
-- deterministisches Stoppen und Neuverbinden bei USB-Trennung sowie App-Hintergrund/Vordergrund
-- REC/STOP
-- MP4/H.264 ohne Ton
-- Aufnahme unter `Movies/ROTG02` auf Android 10+
-- keine Werbung
-- keine INTERNET-Berechtigung
-- keine Mikrofon-Berechtigung
-- keine Storage-Berechtigung auf modernen Android-Versionen
+## Features
 
-## Technische Basis
+- automatic ROTG02 detection and reconnect
+- 640×480 MJPEG live video
+- portrait and landscape layouts
+- English and German UI
+- frame-integrity filtering using UVC FID/EOF boundaries
+- REC / STOP
+- H.264 MP4 recording without audio
+- recordings stored under `Movies/ROTG02` on Android 10+
+- no ads
+- no internet permission
+- no microphone permission
+- no broad storage permission on modern Android versions
 
-Der USB-Transport wurde auf einem Samsung SM-A166B mit Android 16 / API 36 und
-dem ROTG02 real vermessen und in `Feineflammen/diag` bestätigt:
+## Tested hardware
+
+The USB transport and live view have been validated on:
+
+- Eachine ROTG02
+- Samsung SM-A166B
+- Android 16 / API 36
+
+The ROTG02 descriptors used by the transport are:
 
 - UVC 1.0
-- VideoStreaming Interface 1
-- MJPEG formatIndex 1 / frameIndex 1
-- 640×480
-- Endpoint 0x83 IN, ISOCHRONOUS
-- Alternate Setting 11
-- 3000 Byte pro High-Speed-Mikroframe
-- 8 parallele URBs mit je 8 Mikroframe-Paketen
-- 10-Sekunden-Test: 80.000 ISO-Pakete, 0 Paketfehler, 0 UVC-Fehler
+- VideoStreaming interface 1
+- MJPEG format index 1
+- frame index 1: 640×480
+- isochronous IN endpoint `0x83`
+- alternate setting 11
+- 3000 bytes per high-speed microframe
+- eight parallel USBFS URBs with eight microframes each
 
-Der ROTG02 meldet bei PROBE/GET_CUR 30 fps, liefert praktisch jedoch ungefähr
-60 vollständige MJPEG-Frames/s. Der Viewer nimmt für Anzeige und Aufnahme
-maximal ungefähr 30 Frames/s an, damit Decodierung und H.264-Encoding nicht
-unnötig doppelt belastet werden.
+A 10-second transport diagnostic completed 80,000 isochronous packets with zero packet errors, zero invalid UVC headers, and zero UVC error flags.
 
-## Aufnahme
+## Frame handling
 
-MJPEG wird für das Livebild mit Androids BitmapFactory decodiert. Für REC wird
-das Bild in YUV420 gewandelt und über Android MediaCodec als H.264/AVC encodiert.
-MediaMuxer schreibt einen MP4-Container ohne Audiospur.
+The receiver negotiates a nominal 30 fps stream but has been observed to deliver roughly 60 complete MJPEG frames per second.
+
+The viewer intentionally processes about 30 frames per second for display and recording.
+
+MJPEG frames are accepted only when they remain inside one consistent UVC frame boundary:
+
+- a FID change starts a new UVC frame
+- EOF closes the current UVC frame
+- incomplete frames are discarded
+- packet, UVC-header, and oversize errors invalidate the current frame
+- JPEG SOI and EOI must both be present inside the same UVC frame
+
+When a frame is discarded, the last valid image remains on screen until the next valid frame arrives.
+
+## USB architecture
+
+Android/Kotlin handles:
+
+- device detection
+- camera permission
+- USB permission
+- `UsbDeviceConnection.openDevice()`
+- `claimInterface(..., true)`
+- lifecycle and reconnect logic
+- MJPEG decoding
+- UI
+- recording
+
+Native C++/JNI handles:
+
+- UVC PROBE / COMMIT
+- alternate-setting selection
+- Linux USBFS isochronous URBs
+- UVC payload parsing
+- MJPEG frame assembly
+
+The video path does **not** depend on AUSBC, UVCAndroid, libuvc, or libusb.
+
+## Recording
+
+Live MJPEG frames are decoded with Android's `BitmapFactory`.
+
+For recording:
+
+1. Bitmap → YUV420
+2. YUV420 → H.264/AVC using `MediaCodec`
+3. H.264 → MP4 using `MediaMuxer`
+
+No audio track is created.
+
+## Permissions
+
+Requested:
+
+- `android.permission.CAMERA` — required by Android for USB video-class access on current target SDKs
+- USB host feature
+
+Not requested:
+
+- `INTERNET`
+- `RECORD_AUDIO`
+- location
+- contacts
+- SMS
+- package installation
+- broad external-storage access
 
 ## Build
 
-GitHub Actions baut mit:
+GitHub Actions builds an optimized release variant from scratch using:
 
 - Android API 36
-- AGP 9.4.0
+- Android Gradle Plugin 9.4.0
 - Gradle 9.6
 - JDK 17
-- NDK r29 (29.0.14206865)
+- NDK r29
 - CMake 3.22.1
-- ABI arm64-v8a
+- ABI: arm64-v8a
 
-Artifact:
+The CI workflow disables the Gradle build cache, reruns all tasks, verifies the APK signature, checks package/version metadata, audits permissions, and inspects native dependencies/imports for unexpected network or process-control functionality.
 
-- `ROTG02-Viewer-v1.0.2-release.apk`
-- `ROTG02-Viewer-v1.0.2-release.apk.sha256`
+Current version: **1.1.0**
 
-## Berechtigungen
+CI artifact:
 
-Manifest:
+- `ROTG02-Viewer-v1.1.0-release-audited`
 
-- `android.permission.CAMERA` für Androids UVC-USB-Zugriffsregeln
-- USB Host Feature
+### Signing note
 
-Nicht vorhanden:
+CI test APKs are currently signed with Android's test/debug signing configuration while being built as non-debuggable release variants. This is suitable for direct testing, but **not** a long-term public release-signing strategy.
 
-- INTERNET
-- RECORD_AUDIO
-- allgemeine Storage-Berechtigungen
+Before publishing official binary releases, configure a stable private release key through GitHub Secrets or another protected signing system.
 
+## Build locally
 
-## 1.0.1 Packaging-Härtung
+The project can be built with a compatible Android SDK/NDK setup:
 
-Der erste 1.0.0-Debug-Build wurde nach einer Malware-Warnung nicht weiter verteilt.
-1.0.1 wird deshalb bewusst anders gebaut:
+```bash
+gradle :app:assembleRelease
+```
 
-- Release-Variante statt Debug-Variante
-- nicht debuggable
-- R8-Codeoptimierung und Resource-Shrinking
-- vollständiger Neubuild mit deaktiviertem Gradle-Build-Cache und `--rerun-tasks`
-- APK-Signaturprüfung nach dem Build
-- automatische Prüfung auf exakt die erwartete Package-ID und Version
-- automatische Permission-Prüfung; unerwartete Netzwerk-, Mikrofon-, Standort-, SMS-, Kontakte-, Installations- oder allgemeine Storage-Berechtigungen brechen den Build ab
-- native Library wird auf Netzwerk-/Shell-Indikatoren geprüft
-- Build-Commit und Workflow-Run werden im Artifact als `build-info.txt` dokumentiert
-- SHA-256 wird direkt im selben Workflow erzeugt
+The GitHub Actions workflow is the reference build path used for audited test artifacts.
 
-Der aktuelle CI-Release ist für direkte Tests mit dem Android-Debug-Schlüssel signiert,
-aber nicht als Debug-Build kompiliert. Für eine spätere öffentliche Verteilung sollte
-ein dauerhaft geschützter eigener Release-Signing-Key verwendet werden.
+## Scope
 
-Eine bestandene statische Prüfung beweist nicht, dass ein Virenscanner niemals einen
-Fehlalarm erzeugt. Bei einer erneuten Malware-Warnung die APK weiterhin nicht installieren.
+This project intentionally targets the Eachine ROTG02 rather than attempting to be a generic Android UVC camera application.
 
+Device constants and UVC negotiation values are therefore deliberately specific to this receiver.
 
-## 1.0.2 Frame-Integrität
+## Version history
 
-Einzelne sichtbar halb schwarze/weiße Frames werden nicht mehr nur anhand von
-JPEG SOI/EOI zusammengesetzt. Der native Assembler wertet jetzt die UVC-eigenen
-Framegrenzen aus:
-
-- FID-Wechsel startet einen neuen UVC-Frame.
-- Fehlt beim FID-Wechsel das vorherige EOF, wird der unvollständige Frame verworfen.
-- EOF beendet genau den aktuellen UVC-Frame.
-- Nur Frames, die innerhalb derselben UVC-Grenze mit JPEG SOI beginnen und mit
-  JPEG EOI enden, werden an Android weitergegeben.
-- Paket-, UVC-Header- und Oversize-Fehler markieren den aktuellen Frame als
-  unbrauchbar.
-- Verworfene Frames ersetzen das angezeigte Bild nicht. Der letzte gültige Frame
-  bleibt stehen, bis der nächste vollständige Frame eintrifft.
-
-Der Recorder erhält dieselben validierten Frames wie die Anzeige.
+See [CHANGELOG.md](CHANGELOG.md).
