@@ -22,6 +22,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.Gravity
+import android.view.WindowInsets
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.Button
@@ -113,8 +114,8 @@ class MainActivity : Activity() {
                 val shown = shownFrames.get()
                 val fps = shown - lastStatsShown
                 lastStatsShown = shown
-                val rec = if (recording) "  •  REC" else ""
-                setStatus("LIVE  640×480  •  ${fps} fps${rec}")
+                val rec = if (recording) getString(R.string.rec_suffix) else ""
+                setStatus(getString(R.string.status_live, fps, rec))
             } else {
                 lastStatsShown = shownFrames.get()
             }
@@ -133,9 +134,9 @@ class MainActivity : Activity() {
 
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
                     if (device == null || device.deviceId == activeDeviceId) {
-                        stopRecording("USB getrennt")
+                        stopRecording("USB detached")
                         stopStreaming()
-                        setStatus("ROTG02 getrennt")
+                        setStatus(getString(R.string.status_disconnected))
                     }
                     mainHandler.postDelayed({ scanAndConnect("USB-DETACH") }, 250)
                 }
@@ -154,7 +155,7 @@ class MainActivity : Activity() {
             }
 
             if (device == null) {
-                setStatus("USB-Freigabe konnte nicht zugeordnet werden")
+                setStatus(getString(R.string.status_usb_permission_unmatched))
                 return
             }
 
@@ -165,7 +166,7 @@ class MainActivity : Activity() {
             if (usbManager.hasPermission(device)) {
                 startStream(device)
             } else {
-                setStatus("USB-Zugriff nicht freigegeben")
+                setStatus(getString(R.string.status_usb_permission_denied))
             }
         }
     }
@@ -181,7 +182,7 @@ class MainActivity : Activity() {
         frameExecutor.execute { frameLoop() }
         mainHandler.post(statsWatch)
 
-        setStatus("ROTG02 Viewer ${BuildConfig.VERSION_NAME}  •  bereit")
+        setStatus(getString(R.string.status_ready, BuildConfig.VERSION_NAME))
     }
 
     override fun onResume() {
@@ -199,7 +200,7 @@ class MainActivity : Activity() {
         foreground = false
         usbWatchRunning = false
         mainHandler.removeCallbacks(usbWatch)
-        stopRecording("App im Hintergrund")
+        stopRecording("App backgrounded")
         stopStreaming()
         super.onPause()
     }
@@ -211,7 +212,7 @@ class MainActivity : Activity() {
         mainHandler.removeCallbacks(statsWatch)
 
         stopStreaming()
-        stopRecording("App beendet")
+        stopRecording("App destroyed")
 
         frameProcessorAlive.set(false)
         frameExecutor.shutdownNow()
@@ -246,7 +247,7 @@ class MainActivity : Activity() {
         imageView = ImageView(this).apply {
             setBackgroundColor(Color.BLACK)
             scaleType = ImageView.ScaleType.FIT_CENTER
-            contentDescription = "ROTG02 Livebild"
+            contentDescription = getString(R.string.live_view_description)
         }
         root.addView(
             imageView,
@@ -258,31 +259,60 @@ class MainActivity : Activity() {
 
         statusView = TextView(this).apply {
             setTextColor(Color.WHITE)
-            textSize = 15f
-            setBackgroundColor(Color.argb(175, 0, 0, 0))
-            setPadding(dp(12), dp(8), dp(12), dp(8))
+            textSize = 14f
+            setBackgroundResource(R.drawable.bg_status)
         }
-        root.addView(
-            statusView,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP
-            )
-        )
+        val statusParams = FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.TOP or Gravity.START
+        ).apply {
+            leftMargin = dp(8)
+            rightMargin = dp(8)
+        }
+        root.addView(statusView, statusParams)
 
         recordButton = Button(this).apply {
-            text = "REC"
+            text = getString(R.string.rec)
             isEnabled = false
             setTextColor(Color.WHITE)
-            backgroundTintList = ColorStateList.valueOf(Color.rgb(70, 70, 70))
+            setBackgroundResource(R.drawable.bg_record_button)
+            backgroundTintList = ColorStateList.valueOf(Color.rgb(74, 74, 74))
             setOnClickListener { toggleRecording() }
         }
-        val recordParams = FrameLayout.LayoutParams(dp(120), dp(56), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
-        recordParams.bottomMargin = dp(18)
+        val recordParams = FrameLayout.LayoutParams(
+            dp(104),
+            dp(48),
+            Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        )
         root.addView(recordButton, recordParams)
 
+        root.setOnApplyWindowInsetsListener { _, insets ->
+            val topInset: Int
+            val bottomInset: Int
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                topInset = insets.getInsets(WindowInsets.Type.statusBars()).top
+                bottomInset = insets.getInsets(WindowInsets.Type.navigationBars()).bottom
+            } else {
+                @Suppress("DEPRECATION")
+                topInset = insets.systemWindowInsetTop
+                @Suppress("DEPRECATION")
+                bottomInset = insets.systemWindowInsetBottom
+            }
+
+            (statusView.layoutParams as FrameLayout.LayoutParams).also {
+                it.topMargin = topInset + dp(8)
+                statusView.layoutParams = it
+            }
+            (recordButton.layoutParams as FrameLayout.LayoutParams).also {
+                it.bottomMargin = bottomInset + dp(16)
+                recordButton.layoutParams = it
+            }
+            insets
+        }
+
         setContentView(root)
+        root.requestApplyInsets()
     }
 
     private fun ensureCameraPermissionThenScan() {
@@ -291,7 +321,7 @@ class MainActivity : Activity() {
             return
         }
 
-        setStatus("Kamera-Berechtigung wird benötigt")
+        setStatus(getString(R.string.status_camera_permission_required))
         if (!cameraPermissionRequested) {
             cameraPermissionRequested = true
             requestPermissions(arrayOf(Manifest.permission.CAMERA), REQUEST_CAMERA_PERMISSION)
@@ -313,7 +343,7 @@ class MainActivity : Activity() {
         if (granted) {
             scanAndConnect("CAMERA-Permission")
         } else {
-            setStatus("Kamera-Berechtigung fehlt")
+            setStatus(getString(R.string.status_camera_permission_missing))
         }
     }
 
@@ -345,7 +375,7 @@ class MainActivity : Activity() {
         val device = usbManager.deviceList.values.firstOrNull { isRotg02(it) }
         if (device == null) {
             if (!streamRunning) {
-                setStatus("ROTG02 nicht verbunden")
+                setStatus(getString(R.string.status_not_connected))
                 recordButton.isEnabled = false
             }
             return
@@ -372,7 +402,7 @@ class MainActivity : Activity() {
         }
         if (!shouldRequest) return
 
-        setStatus("USB-Zugriff freigeben")
+        setStatus(getString(R.string.status_usb_permission_required))
 
         val intent = Intent(ACTION_USB_PERMISSION).setPackage(packageName)
         val pendingIntent = PendingIntent.getBroadcast(
@@ -388,7 +418,7 @@ class MainActivity : Activity() {
             synchronized(pendingPermissionIds) {
                 pendingPermissionIds.remove(device.deviceId)
             }
-            setStatus("USB-Freigabe fehlgeschlagen")
+            setStatus(getString(R.string.status_usb_permission_failed))
             Log.e(TAG, "requestPermission", t)
         }
     }
@@ -400,14 +430,14 @@ class MainActivity : Activity() {
             if (streamRunning) {
                 if (activeDeviceId == device.deviceId) return
                 NativeUvcStream.stopStream()
-                mainHandler.postDelayed({ scanAndConnect("Streamwechsel") }, 500)
+                mainHandler.postDelayed({ scanAndConnect("stream switch") }, 500)
                 return
             }
             streamRunning = true
             activeDeviceId = device.deviceId
         }
 
-        setStatus("ROTG02 verbindet …")
+        setStatus(getString(R.string.status_connecting))
         recordButton.isEnabled = false
         frameQueue.clear()
         lastProcessedFrameNs = 0L
@@ -423,15 +453,15 @@ class MainActivity : Activity() {
 
                 connection = usbManager.openDevice(device)
                 if (connection == null) {
-                    throw IllegalStateException("openDevice() lieferte null")
+                    throw IllegalStateException("openDevice() returned null")
                 }
 
                 streamingInterface = findStreamingInterface(device)
-                    ?: throw IllegalStateException("VideoStreaming Interface 1/alt0 fehlt")
+                    ?: throw IllegalStateException("VideoStreaming interface 1/alt0 not found")
 
                 claimed = connection.claimInterface(streamingInterface, true)
                 if (!claimed) {
-                    throw IllegalStateException("claimInterface(if=1, force=true) fehlgeschlagen")
+                    throw IllegalStateException("claimInterface(if=1, force=true) failed")
                 }
 
                 NativeUvcStream.prepareStream()
@@ -443,9 +473,9 @@ class MainActivity : Activity() {
                 val summary = NativeUvcStream.runStream(connection.fileDescriptor, frameSink)
                 Log.i(TAG, summary)
             } catch (t: Throwable) {
-                Log.e(TAG, "Streamfehler", t)
+                Log.e(TAG, "Stream error", t)
                 mainHandler.post {
-                    if (foreground) setStatus("Streamfehler: ${t.message ?: t.javaClass.simpleName}")
+                    if (foreground) setStatus(getString(R.string.status_stream_error))
                 }
             } finally {
                 if (claimed && connection != null && streamingInterface != null) {
@@ -466,9 +496,9 @@ class MainActivity : Activity() {
 
                 mainHandler.post {
                     recordButton.isEnabled = false
-                    if (recording) stopRecording("Stream beendet")
+                    if (recording) stopRecording("Stream ended")
                     if (foreground) {
-                        mainHandler.postDelayed({ scanAndConnect("Stream-Ende") }, 750)
+                        mainHandler.postDelayed({ scanAndConnect("stream end") }, 750)
                     }
                 }
             }
@@ -524,7 +554,7 @@ class MainActivity : Activity() {
                 try {
                     activeRecorder.writeFrame(bitmap, frame.timestampNs)
                 } catch (t: Throwable) {
-                    Log.e(TAG, "Aufnahmefehler", t)
+                    Log.e(TAG, "Recording error", t)
                     if (recorder === activeRecorder) {
                         recorder = null
                         recording = false
@@ -537,7 +567,10 @@ class MainActivity : Activity() {
                         updateRecordButton(false)
                         Toast.makeText(
                             this,
-                            "Aufnahmefehler: ${t.message ?: t.javaClass.simpleName}",
+                            getString(
+                                R.string.toast_recording_error,
+                                t.message ?: t.javaClass.simpleName
+                            ),
                             Toast.LENGTH_LONG
                         ).show()
                     }
@@ -573,7 +606,7 @@ class MainActivity : Activity() {
         }
 
         if (!streamRunning || currentBitmap == null) {
-            Toast.makeText(this, "Noch kein Livebild", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.toast_no_live_view), Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -583,7 +616,7 @@ class MainActivity : Activity() {
             recorder = newRecorder
             recording = true
             updateRecordButton(true)
-            Toast.makeText(this, "REC → $target", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.toast_recording_started, target), Toast.LENGTH_SHORT).show()
         } catch (t: Throwable) {
             try {
                 newRecorder.abort()
@@ -591,7 +624,10 @@ class MainActivity : Activity() {
             }
             Toast.makeText(
                 this,
-                "REC konnte nicht starten: ${t.message ?: t.javaClass.simpleName}",
+                getString(
+                    R.string.toast_recording_start_failed,
+                    t.message ?: t.javaClass.simpleName
+                ),
                 Toast.LENGTH_LONG
             ).show()
         }
@@ -608,22 +644,22 @@ class MainActivity : Activity() {
             val saved = try {
                 activeRecorder.stop()
             } catch (t: Throwable) {
-                Log.e(TAG, "Recorder stop", t)
+                Log.e(TAG, "Recorder stop failed", t)
                 null
             }
 
             mainHandler.post {
                 if (saved != null) {
-                    Toast.makeText(this, "Gespeichert: $saved", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, getString(R.string.toast_saved, saved), Toast.LENGTH_LONG).show()
                 } else {
-                    Toast.makeText(this, "Aufnahme konnte nicht gespeichert werden", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, getString(R.string.toast_save_failed), Toast.LENGTH_LONG).show()
                 }
             }
         }
     }
 
     private fun updateRecordButton(active: Boolean) {
-        recordButton.text = if (active) "STOP" else "REC"
+        recordButton.text = getString(if (active) R.string.stop else R.string.rec)
         recordButton.backgroundTintList = ColorStateList.valueOf(
             if (active) Color.rgb(190, 30, 30) else Color.rgb(70, 70, 70)
         )
