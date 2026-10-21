@@ -1,4 +1,4 @@
-# ROTG02 Viewer 1.0.0
+# ROTG02 Viewer 1.0.1
 
 Schlanker Android-FPV-Viewer für den Eachine ROTG02 (VID:PID 18EC:5850).
 
@@ -58,8 +58,8 @@ GitHub Actions baut mit:
 
 Artifact:
 
-- `ROTG02-Viewer-v1.0.0-debug.apk`
-- `ROTG02-Viewer-v1.0.0-debug.apk.sha256`
+- `ROTG02-Viewer-v1.0.1-release.apk`
+- `ROTG02-Viewer-v1.0.1-release.apk.sha256`
 
 ## Berechtigungen
 
@@ -73,3 +73,27 @@ Nicht vorhanden:
 - INTERNET
 - RECORD_AUDIO
 - allgemeine Storage-Berechtigungen
+
+
+## 1.0.1 Packaging-Härtung
+
+Der erste 1.0.0-Debug-Build wurde nach einer Malware-Warnung nicht weiter verteilt.
+1.0.1 wird deshalb bewusst anders gebaut:
+
+- Release-Variante statt Debug-Variante
+- nicht debuggable
+- R8-Codeoptimierung und Resource-Shrinking
+- vollständiger Neubuild mit deaktiviertem Gradle-Build-Cache und `--rerun-tasks`
+- APK-Signaturprüfung nach dem Build
+- automatische Prüfung auf exakt die erwartete Package-ID und Version
+- automatische Permission-Prüfung; unerwartete Netzwerk-, Mikrofon-, Standort-, SMS-, Kontakte-, Installations- oder allgemeine Storage-Berechtigungen brechen den Build ab
+- native Library wird auf Netzwerk-/Shell-Indikatoren geprüft
+- Build-Commit und Workflow-Run werden im Artifact als `build-info.txt` dokumentiert
+- SHA-256 wird direkt im selben Workflow erzeugt
+
+Der aktuelle CI-Release ist für direkte Tests mit dem Android-Debug-Schlüssel signiert,
+aber nicht als Debug-Build kompiliert. Für eine spätere öffentliche Verteilung sollte
+ein dauerhaft geschützter eigener Release-Signing-Key verwendet werden.
+
+Eine bestandene statische Prüfung beweist nicht, dass ein Virenscanner niemals einen
+Fehlalarm erzeugt. Bei einer erneuten Malware-Warnung die APK weiterhin nicht installieren.
