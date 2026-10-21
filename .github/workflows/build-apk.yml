@@ -1,8 +1,8 @@
-name: Build ROTG02 Viewer APK
+name: Build and Audit ROTG02 Viewer APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, harden-v1.0.1 ]
   workflow_dispatch:
 
 jobs:
@@ -12,8 +12,10 @@ jobs:
       contents: read
 
     steps:
-      - name: Checkout
+      - name: Checkout exact commit
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Java 17
         uses: actions/setup-java@v4
@@ -31,20 +33,75 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
+          cache-disabled: true
 
-      - name: Build debug APK
-        run: gradle --no-daemon --stacktrace :app:assembleDebug
-
-      - name: Package artifact
+      - name: Clean workspace and build release from scratch
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk ROTG02-Viewer-v1.0.0-debug.apk
-          sha256sum ROTG02-Viewer-v1.0.0-debug.apk > ROTG02-Viewer-v1.0.0-debug.apk.sha256
+          rm -rf app/build .gradle
+          gradle --no-daemon --stacktrace --no-build-cache --rerun-tasks :app:assembleRelease
 
-      - name: Upload APK
+      - name: Audit APK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK="app/build/outputs/apk/release/app-release.apk"
+          AAPT2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
+          APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+
+          test -f "$APK"
+
+          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee apk-signature.txt
+          "$AAPT2" dump badging "$APK" | tee apk-badging.txt
+          "$AAPT2" dump permissions "$APK" | tee apk-permissions.txt
+          unzip -l "$APK" | tee apk-contents.txt
+
+          grep -q "package: name='de.feineflammen.rotg02viewer' versionCode='2' versionName='1.0.1'" apk-badging.txt
+          grep -q "android.permission.CAMERA" apk-permissions.txt
+
+          FORBIDDEN='android.permission.(INTERNET|RECORD_AUDIO|READ_CONTACTS|WRITE_CONTACTS|ACCESS_FINE_LOCATION|ACCESS_COARSE_LOCATION|REQUEST_INSTALL_PACKAGES|QUERY_ALL_PACKAGES|READ_SMS|SEND_SMS|RECEIVE_SMS|READ_PHONE_STATE|SYSTEM_ALERT_WINDOW|WRITE_EXTERNAL_STORAGE|READ_EXTERNAL_STORAGE)'
+          if grep -Eq "$FORBIDDEN" apk-permissions.txt; then
+            echo "Forbidden permission found"
+            exit 1
+          fi
+
+          rm -f librotg02native.so
+          unzip -p "$APK" lib/arm64-v8a/librotg02native.so > librotg02native.so
+          test -s librotg02native.so
+
+          readelf -d librotg02native.so | tee native-dependencies.txt
+
+          if strings librotg02native.so | grep -Eiq 'https?://|libcurl|libssl|libcrypto|execve|/bin/sh'; then
+            echo "Suspicious network/shell string found in native library"
+            strings librotg02native.so | grep -Ei 'https?://|libcurl|libssl|libcrypto|execve|/bin/sh' | tee native-suspicious-strings.txt
+            exit 1
+          fi
+
+          {
+            echo "repository=$GITHUB_REPOSITORY"
+            echo "commit=$GITHUB_SHA"
+            echo "workflow_run=$GITHUB_RUN_ID"
+            echo "version=1.0.1"
+            echo "variant=release"
+            echo "build_cache=disabled"
+          } | tee build-info.txt
+
+      - name: Package audited artifact
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk ROTG02-Viewer-v1.0.1-release.apk
+          sha256sum ROTG02-Viewer-v1.0.1-release.apk | tee ROTG02-Viewer-v1.0.1-release.apk.sha256
+
+      - name: Upload audited APK
         uses: actions/upload-artifact@v4
         with:
-          name: ROTG02-Viewer-v1.0.0-debug
+          name: ROTG02-Viewer-v1.0.1-release-audited
           path: |
-            ROTG02-Viewer-v1.0.0-debug.apk
-            ROTG02-Viewer-v1.0.0-debug.apk.sha256
+            ROTG02-Viewer-v1.0.1-release.apk
+            ROTG02-Viewer-v1.0.1-release.apk.sha256
+            build-info.txt
+            apk-signature.txt
+            apk-badging.txt
+            apk-permissions.txt
+            apk-contents.txt
+            native-dependencies.txt
           if-no-files-found: error
