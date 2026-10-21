@@ -11,8 +11,8 @@ android {
         applicationId = "de.feineflammen.rotg02viewer"
         minSdk = 23
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 4
+        versionName = "1.1.0"
 
         externalNativeBuild {
             cmake {
@@ -45,9 +45,9 @@ android {
                 "proguard-rules.pro"
             )
 
-            // Test-/Direktinstallationsbuild: nicht debuggable, aber installierbar.
-            // Für öffentliche Verteilung später durch einen dauerhaft geheim
-            // gehaltenen Release-Key ersetzen.
+            // Direct-install test release: not debuggable, but installable.
+            // Replace the debug signing key with a protected long-term release
+            // key before publishing signed binary releases.
             signingConfig = signingConfigs.getByName("debug")
         }
     }
