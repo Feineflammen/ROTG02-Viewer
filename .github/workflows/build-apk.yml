@@ -59,8 +59,8 @@ jobs:
           grep -q "package: name='de.feineflammen.rotg02viewer' versionCode='2' versionName='1.0.1'" apk-badging.txt
           grep -q "android.permission.CAMERA" apk-permissions.txt
 
-          FORBIDDEN='android.permission.(INTERNET|RECORD_AUDIO|READ_CONTACTS|WRITE_CONTACTS|ACCESS_FINE_LOCATION|ACCESS_COARSE_LOCATION|REQUEST_INSTALL_PACKAGES|QUERY_ALL_PACKAGES|READ_SMS|SEND_SMS|RECEIVE_SMS|READ_PHONE_STATE|SYSTEM_ALERT_WINDOW|WRITE_EXTERNAL_STORAGE|READ_EXTERNAL_STORAGE)'
-          if grep -Eq "$FORBIDDEN" apk-permissions.txt; then
+          FORBIDDEN_PERMISSIONS='android.permission.(INTERNET|RECORD_AUDIO|READ_CONTACTS|WRITE_CONTACTS|ACCESS_FINE_LOCATION|ACCESS_COARSE_LOCATION|REQUEST_INSTALL_PACKAGES|QUERY_ALL_PACKAGES|READ_SMS|SEND_SMS|RECEIVE_SMS|READ_PHONE_STATE|SYSTEM_ALERT_WINDOW|WRITE_EXTERNAL_STORAGE|READ_EXTERNAL_STORAGE)'
+          if grep -Eq "$FORBIDDEN_PERMISSIONS" apk-permissions.txt; then
             echo "Forbidden permission found"
             exit 1
           fi
@@ -70,43 +70,14 @@ jobs:
           test -s librotg02native.so
 
           readelf -d librotg02native.so | tee native-dependencies.txt
-          readelf -Ws librotg02native.so | awk '$7 == "UND" { print $8 }' | sed 's/@.*//' | sort -u | tee native-imports.txt
+          readelf -Ws librotg02native.so             | awk '$7 == "UND" { print $8 }'             | sed 's/@.*//'             | sort -u             | tee native-imports.txt
 
           if grep -Eiq 'Shared library: \[(libcurl|libssl|libcrypto)[^]]*\]' native-dependencies.txt; then
             echo "Forbidden network/crypto dependency found in native library"
             exit 1
           fi
 
-          FORBIDDEN_NATIVE='^(socket|connect|send|sendto|recv|recvfrom|execve|execl|execlp|execvp|system|popen|fork|ptrace)
-            echo "repository=$GITHUB_REPOSITORY"
-            echo "commit=$GITHUB_SHA"
-            echo "workflow_run=$GITHUB_RUN_ID"
-            echo "version=1.0.1"
-            echo "variant=release"
-            echo "build_cache=disabled"
-          } | tee build-info.txt
-
-      - name: Package audited artifact
-        run: |
-          cp app/build/outputs/apk/release/app-release.apk ROTG02-Viewer-v1.0.1-release.apk
-          sha256sum ROTG02-Viewer-v1.0.1-release.apk | tee ROTG02-Viewer-v1.0.1-release.apk.sha256
-
-      - name: Upload audited APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: ROTG02-Viewer-v1.0.1-release-audited
-          path: |
-            ROTG02-Viewer-v1.0.1-release.apk
-            ROTG02-Viewer-v1.0.1-release.apk.sha256
-            build-info.txt
-            apk-signature.txt
-            apk-badging.txt
-            apk-permissions.txt
-            apk-contents.txt
-            native-dependencies.txt
-            native-imports.txt
-          if-no-files-found: error
-
+          FORBIDDEN_NATIVE='^(socket|connect|send|sendto|recv|recvfrom|execve|execl|execlp|execvp|system|popen|fork|ptrace)$'
           if grep -Eq "$FORBIDDEN_NATIVE" native-imports.txt; then
             echo "Forbidden network/process symbol imported by native library"
             grep -E "$FORBIDDEN_NATIVE" native-imports.txt
@@ -140,4 +111,5 @@ jobs:
             apk-permissions.txt
             apk-contents.txt
             native-dependencies.txt
+            native-imports.txt
           if-no-files-found: error
