@@ -434,7 +434,11 @@ class MainActivity : Activity() {
                     throw IllegalStateException("claimInterface(if=1, force=true) fehlgeschlagen")
                 }
 
-                if (!foreground || activeDeviceId != deviceId) return@execute
+                NativeUvcStream.prepareStream()
+                if (!foreground || activeDeviceId != deviceId) {
+                    NativeUvcStream.stopStream()
+                    return@execute
+                }
 
                 val summary = NativeUvcStream.runStream(connection.fileDescriptor, frameSink)
                 Log.i(TAG, summary)
