@@ -65,7 +65,7 @@ uint64_t nowNs() {
 
 std::string errnoText(const char* op) {
     std::ostringstream out;
-    out << op << " fehlgeschlagen: errno=" << errno
+    out << op << " failed: errno=" << errno
         << " (" << std::strerror(errno) << ")";
     return out.str();
 }
@@ -319,7 +319,7 @@ std::string runStream(JNIEnv* env, int javaFd, jobject sink) {
 
     jclass sinkClass = env->GetObjectClass(sink);
     if (sinkClass == nullptr) {
-        out << "FrameSink-Klasse nicht gefunden\n";
+        out << "FrameSink class not found\n";
         return out.str();
     }
 
@@ -328,7 +328,7 @@ std::string runStream(JNIEnv* env, int javaFd, jobject sink) {
 
     if (callback == nullptr) {
         if (env->ExceptionCheck()) env->ExceptionClear();
-        out << "FrameSink.onJpegFrame(byte[], long) nicht gefunden\n";
+        out << "FrameSink.onJpegFrame(byte[], long) not found\n";
         return out.str();
     }
 
@@ -340,7 +340,7 @@ std::string runStream(JNIEnv* env, int javaFd, jobject sink) {
 
     if (gStopRequested.load(std::memory_order_acquire)) {
         close(fd);
-        out << "Streamstart vor UVC-Setup abgebrochen\n";
+        out << "Stream start cancelled before UVC setup\n";
         return out.str();
     }
 
@@ -422,7 +422,7 @@ std::string runStream(JNIEnv* env, int javaFd, jobject sink) {
         << " maxPayload=" << maxPayload << "\n";
 
     if (formatIndex != 1 || frameIndex != 1 || maxPayload > kPacketSize) {
-        out << "UVC-Aushandlung unerwartet; Stream abgebrochen\n";
+        out << "Unexpected UVC negotiation result; stream aborted\n";
         finish();
         return out.str();
     }
@@ -452,7 +452,7 @@ std::string runStream(JNIEnv* env, int javaFd, jobject sink) {
 
     for (auto& ctx : urbs) {
         if (!allocateUrb(ctx)) {
-            out << "URB allocation fehlgeschlagen\n";
+            out << "URB allocation failed\n";
             finish();
             return out.str();
         }
@@ -470,7 +470,7 @@ std::string runStream(JNIEnv* env, int javaFd, jobject sink) {
     }
 
     out << "ISO URBs queued: " << active << "/" << kUrbCount
-        << " (" << kPacketsPerUrb << " Pakete/URB)\n";
+        << " (" << kPacketsPerUrb << " packets/URB)\n";
 
     Metrics metrics;
     UvcJpegAssembler assembler;
@@ -505,7 +505,7 @@ std::string runStream(JNIEnv* env, int javaFd, jobject sink) {
         auto* ctx = static_cast<UrbContext*>(urb->usercontext);
         if (ctx == nullptr) {
             fatal = true;
-            out << "URB ohne usercontext\n";
+            out << "URB without usercontext\n";
             break;
         }
 
@@ -617,7 +617,7 @@ std::string runStream(JNIEnv* env, int javaFd, jobject sink) {
     ).count();
 
     out << std::fixed << std::setprecision(2)
-        << "Stream beendet: " << seconds << " s"
+        <<  "Stream ended: " << seconds << " s"
         << ", frames=" << assembler.deliveredFrames()
         << ", payload=" << (metrics.payloadBytes / 1000000.0) << " MB"
         << ", packetErrors=" << metrics.packetErrors
