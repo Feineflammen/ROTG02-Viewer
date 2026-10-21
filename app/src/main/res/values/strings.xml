@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ROTG02 Viewer</string>
+    <string name="live_view_description">ROTG02 live video</string>
+    <string name="rec">REC</string>
+    <string name="stop">STOP</string>
+    <string name="rec_suffix">  •  REC</string>
+    <string name="status_ready">ROTG02 Viewer %1$s  •  ready</string>
+    <string name="status_live">LIVE  640×480  •  %1$d fps%2$s</string>
+    <string name="status_disconnected">ROTG02 disconnected</string>
+    <string name="status_not_connected">ROTG02 not connected</string>
+    <string name="status_connecting">Connecting ROTG02…</string>
+    <string name="status_camera_permission_required">Camera permission is required for USB video access</string>
+    <string name="status_camera_permission_missing">Camera permission denied</string>
+    <string name="status_usb_permission_required">Allow USB access</string>
+    <string name="status_usb_permission_unmatched">USB permission result could not be matched to the device</string>
+    <string name="status_usb_permission_denied">USB access was not granted</string>
+    <string name="status_usb_permission_failed">USB permission request failed</string>
+    <string name="status_stream_error">Stream error</string>
+    <string name="toast_no_live_view">No live video yet</string>
+    <string name="toast_recording_started">Recording → %1$s</string>
+    <string name="toast_recording_error">Recording error: %1$s</string>
+    <string name="toast_recording_start_failed">Could not start recording: %1$s</string>
+    <string name="toast_saved">Saved: %1$s</string>
+    <string name="toast_save_failed">Recording could not be saved</string>
+</resources>
