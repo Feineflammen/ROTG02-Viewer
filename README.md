@@ -121,4 +121,4 @@ The GitHub Actions workflow is the reference build path.
 
 ## Version history
 
-See [CHANGELOG.md](CHANGELOG.md). Version 1.1.0, the ROTG02-only viewer, is kept on the branch `version-1.1.0`.
+See [CHANGELOG.md](CHANGELOG.md). Version 1.1.0, the ROTG02-only viewer, is commit [`8466b9f`](../../tree/8466b9fe36f50a4fa3b1beac195b687c1320ad2f).
