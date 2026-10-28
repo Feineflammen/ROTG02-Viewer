@@ -15,6 +15,7 @@ Generic UVC camera support.
 - PHOTO button: saves the camera's original JPEG (MJPEG) to Pictures/ROTG02
 - recording uses the live resolution and scales the bitrate
 - tap the status line for camera details and the last stream log
+- isochronous URBs fall back from 32 to 16 to 8 packets when the host controller refuses them (ENOMEM)
 
 ## 1.1.0
 

@@ -27,7 +27,9 @@
 
 namespace {
 
-constexpr int kIsoPacketsPerUrb = 32;
+// Tried in order: some host controllers refuse large isochronous URBs with
+// ENOMEM (the ROTG02 on Samsung needs 8 packets per URB).
+constexpr std::array<int, 3> kIsoPacketsPerUrbOptions{32, 16, 8};
 constexpr int kIsoUrbCount = 8;
 constexpr int kBulkUrbCount = 8;
 constexpr size_t kBulkMaxUrbBytes = 64 * 1024;
@@ -142,13 +144,13 @@ void freeUrb(UrbContext& ctx) {
     ctx.submitted = false;
 }
 
-bool allocateIsoUrb(UrbContext& ctx, unsigned char endpoint, int packetBytes) {
+bool allocateIsoUrb(UrbContext& ctx, unsigned char endpoint, int packetBytes, int packets) {
     const size_t urbBytes =
         sizeof(usbdevfs_urb) +
-        static_cast<size_t>(kIsoPacketsPerUrb) * sizeof(usbdevfs_iso_packet_desc);
+        static_cast<size_t>(packets) * sizeof(usbdevfs_iso_packet_desc);
 
-    ctx.bufferBytes = static_cast<size_t>(packetBytes) * kIsoPacketsPerUrb;
-    ctx.packets = kIsoPacketsPerUrb;
+    ctx.bufferBytes = static_cast<size_t>(packetBytes) * static_cast<size_t>(packets);
+    ctx.packets = packets;
     ctx.urb = static_cast<usbdevfs_urb*>(std::calloc(1, urbBytes));
     ctx.buffer = static_cast<uint8_t*>(std::malloc(ctx.bufferBytes));
 
@@ -162,10 +164,10 @@ bool allocateIsoUrb(UrbContext& ctx, unsigned char endpoint, int packetBytes) {
     ctx.urb->flags = USBDEVFS_URB_ISO_ASAP;
     ctx.urb->buffer = ctx.buffer;
     ctx.urb->buffer_length = static_cast<int>(ctx.bufferBytes);
-    ctx.urb->number_of_packets = kIsoPacketsPerUrb;
+    ctx.urb->number_of_packets = packets;
     ctx.urb->usercontext = &ctx;
 
-    for (int i = 0; i < kIsoPacketsPerUrb; ++i) {
+    for (int i = 0; i < packets; ++i) {
         ctx.urb->iso_frame_desc[i].length = static_cast<unsigned int>(packetBytes);
     }
     return true;
@@ -536,22 +538,69 @@ std::string runStream(JNIEnv* env, int javaFd, jobject sink, StreamConfig cfg) {
 
     const int urbCount = cfg.bulk ? kBulkUrbCount : kIsoUrbCount;
     urbs.resize(static_cast<size_t>(urbCount));
-    for (auto& ctx : urbs) {
-        const bool ok = cfg.bulk
-            ? allocateBulkUrb(ctx, endpoint, bulkUrbBytes)
-            : allocateIsoUrb(ctx, endpoint, packetBytes);
-        if (!ok) {
+    int active = 0;
+
+    // Isochronous: fall back to smaller URBs when the host controller refuses
+    // the larger ones. Bulk has a single attempt.
+    const size_t attempts = cfg.bulk ? 1 : kIsoPacketsPerUrbOptions.size();
+    for (size_t attempt = 0; attempt < attempts && active == 0; ++attempt) {
+        const int packets = kIsoPacketsPerUrbOptions[attempt];
+        bool allocated = true;
+        for (auto& ctx : urbs) {
+            const bool ok = cfg.bulk
+                ? allocateBulkUrb(ctx, endpoint, bulkUrbBytes)
+                : allocateIsoUrb(ctx, endpoint, packetBytes, packets);
+            if (!ok) {
+                allocated = false;
+                break;
+            }
+        }
+        if (!allocated) {
             out << "URB allocation failed\n";
-            finish();
-            return out.str();
+            break;
+        }
+
+        for (auto& ctx : urbs) {
+            if (!submitUrb(fd, ctx, out)) break;
+            ++active;
+        }
+
+        if (!cfg.bulk) {
+            if (active < urbCount && active > 0 && active >= urbCount / 2) {
+                break;  // enough URBs in flight to stream
+            }
+            if (active == urbCount) {
+                out << "Isochronous URBs: " << packets << " packets each\n";
+                break;
+            }
+            // Too few accepted: cancel them and retry with smaller URBs.
+            for (auto& ctx : urbs) {
+                if (ctx.submitted) ioctl(fd, USBDEVFS_DISCARDURB, ctx.urb);
+            }
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+            while (active > 0 && std::chrono::steady_clock::now() < deadline) {
+                void* done = nullptr;
+                if (ioctl(fd, USBDEVFS_REAPURBNDELAY, &done) == 0 && done != nullptr) {
+                    auto* c = static_cast<UrbContext*>(static_cast<usbdevfs_urb*>(done)->usercontext);
+                    if (c != nullptr && c->submitted) {
+                        c->submitted = false;
+                        --active;
+                    }
+                } else {
+                    usleep(500);
+                }
+            }
+            if (active > 0) {
+                out << "Could not cancel refused URBs\n";
+                break;
+            }
+            for (auto& ctx : urbs) freeUrb(ctx);
+            if (attempt + 1 < attempts) {
+                out << "Retrying with " << kIsoPacketsPerUrbOptions[attempt + 1] << " packets per URB\n";
+            }
         }
     }
 
-    int active = 0;
-    for (auto& ctx : urbs) {
-        if (!submitUrb(fd, ctx, out)) break;
-        ++active;
-    }
     if (active == 0) {
         finish();
         return out.str();
