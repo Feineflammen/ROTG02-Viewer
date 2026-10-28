@@ -2,7 +2,7 @@ name: Build and Audit ROTG02 Viewer APK
 
 on:
   push:
-    branches: [ main, generic-uvc ]
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:

@@ -1,94 +1,77 @@
 # ROTG02 Viewer
 
-An Android viewer for the **Eachine ROTG02** USB receiver (`VID:PID 18EC:5850`) and, since 2.0.0, other USB Video Class (UVC) cameras that stream MJPEG or YUY2.
+An Android viewer for USB Video Class (UVC) cameras, built around the **Eachine ROTG02** USB receiver (`VID:PID 18EC:5850`).
 
-The app uses a small native UVC/USB isochronous transport written specifically for the ROTG02 instead of a general-purpose UVC framework.
+Since 2.0.0 the app also works with other UVC cameras that stream MJPEG or YUY2, for example cheap USB industrial cameras. It uses its own small native UVC/USBFS transport instead of a general-purpose UVC framework.
+
+## Download
+
+Every build on `main` is published as a pre-release with the APK attached. Release assets download without a GitHub login:
+
+- [Releases](../../releases)
+
+The APK is signed with the debug/test key (see [Signing note](#signing-note)). Play Protect asks to scan it on first install because the app is not from the Play Store.
 
 ## Features
 
-- automatic ROTG02 detection and reconnect
-- 640×480 MJPEG live video
-- portrait and landscape layouts
+- automatic camera detection and reconnect; the ROTG02 is preferred when several cameras are connected
+- formats, resolutions and frame rates read from the camera's USB descriptors
+- MJPEG and uncompressed YUY2
+- isochronous and bulk transfer cameras
+- **MODE**: choose the resolution, remembered per camera
+- **PHOTO**: saves a JPEG to `Pictures/ROTG02`; for MJPEG cameras the camera's own JPEG is stored unchanged
+- **REC / STOP**: H.264 MP4 recording without audio, stored under `Movies/ROTG02`
+- portrait layout with buttons at the bottom, landscape layout with buttons at the right edge
+- rotation follows the sensor inside the app, even with auto-rotate off
+- tap the status line for camera details and the last stream log
 - English and German UI
-- frame-integrity filtering using UVC FID/EOF boundaries
-- REC / STOP
-- H.264 MP4 recording without audio
-- recordings stored under `Movies/ROTG02` on Android 10+
-- no ads
-- no internet permission
-- no microphone permission
-- no broad storage permission on modern Android versions
+- no ads, no internet permission, no microphone permission, no broad storage permission on modern Android versions
 
 ## Tested hardware
 
-The USB transport and live view have been validated on:
+- Eachine ROTG02 (640×480 MJPEG, isochronous)
+- generic CS-mount USB industrial camera (MJPEG up to 1920×1080, isochronous)
+- Samsung SM-A166B, Android 16 / API 36
 
-- Eachine ROTG02
-- Samsung SM-A166B
-- Android 16 / API 36
+Reference descriptors of the ROTG02:
 
-The ROTG02 descriptors used by the transport are:
+- UVC 1.0, VideoStreaming interface 1
+- MJPEG format index 1, frame index 1: 640×480 (frame index 2: 352×288)
+- isochronous IN endpoint `0x83`, alternate setting 11 with 3000 bytes per high-speed microframe
 
-- UVC 1.0
-- VideoStreaming interface 1
-- MJPEG format index 1
-- frame index 1: 640×480
-- isochronous IN endpoint `0x83`
-- alternate setting 11
-- 3000 bytes per high-speed microframe
-- eight parallel USBFS URBs with eight microframes each
+On the Samsung host controller the ROTG02 only accepts isochronous URBs of eight packets; larger URBs are refused with `ENOMEM`. The transport therefore tries 32, 16 and 8 packets per URB and keeps the first size the controller accepts.
 
-A 10-second transport diagnostic completed 80,000 isochronous packets with zero packet errors, zero invalid UVC headers, and zero UVC error flags.
+## How a stream is set up
+
+1. Kotlin reads the raw configuration descriptors (`UsbDeviceConnection.getRawDescriptors()`) and parses the VideoControl header, the VideoStreaming format and frame descriptors, and the endpoints of every alternate setting.
+2. The selected mode (format index, frame index, default frame interval) is passed to native code.
+3. Native code runs UVC PROBE/COMMIT (26, 34 or 48 bytes depending on the UVC version, with a fallback to 26), then picks the smallest alternate setting whose packet size covers the negotiated payload size.
+4. Isochronous or bulk URBs are queued through Linux USBFS and the UVC payload headers are parsed.
 
 ## Frame handling
 
-The receiver negotiates a nominal 30 fps stream but has been observed to deliver roughly 60 complete MJPEG frames per second.
+- a FID change starts a new frame; frames are closed on EOF or on the FID change (many cameras never set EOF)
+- packet, UVC-header and oversize errors invalidate the current frame
+- MJPEG frames must contain JPEG SOI and EOI; trailing zero padding after EOI is accepted
+- YUY2 frames must have exactly width × height × 2 bytes
+- discarded frames leave the last valid image on screen
 
-The viewer intentionally processes about 30 frames per second for display and recording.
-
-MJPEG frames are accepted only when they remain inside one consistent UVC frame boundary:
-
-- a FID change starts a new UVC frame
-- EOF closes the current UVC frame
-- incomplete frames are discarded
-- packet, UVC-header, and oversize errors invalidate the current frame
-- JPEG SOI and EOI must both be present inside the same UVC frame
-
-When a frame is discarded, the last valid image remains on screen until the next valid frame arrives.
+The viewer processes about 30 frames per second for display and recording. The ROTG02 negotiates 30 fps but has been observed to deliver about 60.
 
 ## USB architecture
 
-Android/Kotlin handles:
+Android/Kotlin handles device detection, camera and USB permissions, `openDevice()`, `claimInterface(..., true)`, descriptor parsing, lifecycle and reconnect, MJPEG/YUY2 decoding, UI, photos and recording.
 
-- device detection
-- camera permission
-- USB permission
-- `UsbDeviceConnection.openDevice()`
-- `claimInterface(..., true)`
-- lifecycle and reconnect logic
-- MJPEG decoding
-- UI
-- recording
+Native C++/JNI handles UVC PROBE/COMMIT, alternate-setting selection, USBFS isochronous and bulk URBs, UVC payload parsing and frame assembly.
 
-Native C++/JNI handles:
-
-- UVC PROBE / COMMIT
-- alternate-setting selection
-- Linux USBFS isochronous URBs
-- UVC payload parsing
-- MJPEG frame assembly
-
-The video path does **not** depend on AUSBC, UVCAndroid, libuvc, or libusb.
+The video path does **not** depend on AUSBC, UVCAndroid, libuvc or libusb.
 
 ## Recording
 
-Live MJPEG frames are decoded with Android's `BitmapFactory`.
-
-For recording:
-
-1. Bitmap → YUV420
-2. YUV420 → H.264/AVC using `MediaCodec`
-3. H.264 → MP4 using `MediaMuxer`
+1. live frame → Bitmap (`BitmapFactory` for MJPEG, own converter for YUY2)
+2. Bitmap → YUV420
+3. YUV420 → H.264/AVC with `MediaCodec`, bitrate scaled to the resolution
+4. H.264 → MP4 with `MediaMuxer`
 
 No audio track is created.
 
@@ -96,18 +79,10 @@ No audio track is created.
 
 Requested:
 
-- `android.permission.CAMERA` — required by Android for USB video-class access on current target SDKs
+- `android.permission.CAMERA`, required by Android for USB video-class access on current target SDKs
 - USB host feature
 
-Not requested:
-
-- `INTERNET`
-- `RECORD_AUDIO`
-- location
-- contacts
-- SMS
-- package installation
-- broad external-storage access
+Not requested: `INTERNET`, `RECORD_AUDIO`, location, contacts, SMS, package installation, broad external-storage access.
 
 ## Build
 
@@ -121,38 +96,29 @@ GitHub Actions builds an optimized release variant from scratch using:
 - CMake 3.22.1
 - ABI: arm64-v8a
 
-The CI workflow disables the Gradle build cache, reruns all tasks, verifies the APK signature, checks package/version metadata, audits permissions, and inspects native dependencies/imports for unexpected network or process-control functionality.
+The workflow disables the Gradle build cache, reruns all tasks, verifies the APK signature, checks package/version metadata, audits permissions, inspects native dependencies/imports for unexpected network or process-control functionality, uploads an audited artifact and publishes the APK as a pre-release.
 
 Current version: **2.0.0**
 
-CI artifact:
-
-- `ROTG02-Viewer-v2.0.0-release-audited`
-
 ### Signing note
 
-CI test APKs are currently signed with Android's test/debug signing configuration while being built as non-debuggable release variants. This is suitable for direct testing, but **not** a long-term public release-signing strategy.
+CI test APKs are signed with Android's test/debug signing configuration while being built as non-debuggable release variants. This is suitable for direct testing, but **not** a long-term public release-signing strategy.
 
 Before publishing official binary releases, configure a stable private release key through GitHub Secrets or another protected signing system.
 
 ## Build locally
 
-The project can be built with a compatible Android SDK/NDK setup:
-
 ```bash
 gradle :app:assembleRelease
 ```
 
-The GitHub Actions workflow is the reference build path used for audited test artifacts.
+The GitHub Actions workflow is the reference build path.
 
-## Scope
+## Limitations
 
-The ROTG02 remains the reference device and is preferred when several cameras are connected.
-Other UVC cameras are configured from their own USB descriptors: format, resolution, frame interval,
-alternate setting or bulk endpoint. H.264 and frame-based formats are not supported.
-
-Tap the status line to see the parsed descriptors and the last native stream log.
+- H.264 and other frame-based camera formats are not supported
+- only the first VideoStreaming interface with a supported format is used
 
 ## Version history
 
-See [CHANGELOG.md](CHANGELOG.md).
+See [CHANGELOG.md](CHANGELOG.md). Version 1.1.0, the ROTG02-only viewer, is tagged as `v1.1.0`.
