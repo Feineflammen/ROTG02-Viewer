@@ -1,26 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">ROTG02 Viewer</string>
-    <string name="live_view_description">ROTG02 Livebild</string>
+    <string name="live_view_description">Livebild</string>
     <string name="rec">REC</string>
     <string name="stop">STOP</string>
     <string name="rec_suffix">  •  REC</string>
     <string name="status_ready">ROTG02 Viewer %1$s  •  bereit</string>
-    <string name="status_live">LIVE  640×480  •  %1$d fps%2$s</string>
-    <string name="status_disconnected">ROTG02 getrennt</string>
-    <string name="status_not_connected">ROTG02 nicht verbunden</string>
-    <string name="status_connecting">ROTG02 verbindet…</string>
+    <string name="status_live">LIVE  %1$s  •  %2$d fps%3$s</string>
+    <string name="status_disconnected">Kamera getrennt</string>
+    <string name="status_not_connected">Keine USB-Kamera verbunden</string>
+    <string name="status_connecting">Kamera verbindet…</string>
     <string name="status_camera_permission_required">Kamera-Berechtigung wird für den USB-Videozugriff benötigt</string>
     <string name="status_camera_permission_missing">Kamera-Berechtigung abgelehnt</string>
     <string name="status_usb_permission_required">USB-Zugriff freigeben</string>
     <string name="status_usb_permission_unmatched">USB-Freigabe konnte keinem Gerät zugeordnet werden</string>
     <string name="status_usb_permission_denied">USB-Zugriff wurde nicht freigegeben</string>
     <string name="status_usb_permission_failed">USB-Freigabe fehlgeschlagen</string>
-    <string name="status_stream_error">Streamfehler</string>
+    <string name="status_stream_error">Streamfehler (antippen für Details)</string>
     <string name="toast_no_live_view">Noch kein Livebild</string>
     <string name="toast_recording_started">Aufnahme → %1$s</string>
     <string name="toast_recording_error">Aufnahmefehler: %1$s</string>
     <string name="toast_recording_start_failed">Aufnahme konnte nicht gestartet werden: %1$s</string>
     <string name="toast_saved">Gespeichert: %1$s</string>
     <string name="toast_save_failed">Aufnahme konnte nicht gespeichert werden</string>
+    <string name="status_unsupported">Kamera gefunden, liefert aber weder MJPEG noch YUY2 (antippen für Details)</string>
+    <string name="photo">FOTO</string>
+    <string name="mode">MODUS</string>
+    <string name="mode_title">Auflösung</string>
+    <string name="info_title">Kameradetails</string>
+    <string name="info_no_device">Noch keine Kamera geöffnet</string>
+    <string name="toast_photo_failed">Foto konnte nicht gespeichert werden</string>
 </resources>

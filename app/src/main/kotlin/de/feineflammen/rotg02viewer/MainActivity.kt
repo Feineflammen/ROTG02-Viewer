@@ -2,8 +2,10 @@ package de.feineflammen.rotg02viewer
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -18,8 +20,10 @@ import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.MediaStore
 import android.util.Log
 import android.view.Gravity
 import android.view.WindowInsets
@@ -28,8 +32,14 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import java.io.File
+import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -44,6 +54,7 @@ class MainActivity : Activity() {
         private const val ROTG02_PID = 0x5850
         private const val USB_CLASS_VIDEO = 0x0E
         private const val UVC_SUBCLASS_VIDEOSTREAMING = 0x02
+        private const val PREFS = "uvc_modes"
     }
 
     private data class Frame(val jpeg: ByteArray, val timestampNs: Long)
@@ -52,6 +63,9 @@ class MainActivity : Activity() {
     private lateinit var imageView: ImageView
     private lateinit var statusView: TextView
     private lateinit var recordButton: Button
+    private lateinit var photoButton: Button
+    private lateinit var modeButton: Button
+    private lateinit var controlBar: LinearLayout
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val streamExecutor = Executors.newSingleThreadExecutor()
@@ -78,6 +92,26 @@ class MainActivity : Activity() {
 
     @Volatile
     private var recording = false
+
+    @Volatile
+    private var streamInfo: UvcStreamInfo? = null
+
+    @Volatile
+    private var streamMode: UvcFrameMode? = null
+
+    @Volatile
+    private var lastJpeg: ByteArray? = null
+
+    @Volatile
+    private var lastNativeLog = ""
+
+    @Volatile
+    private var deviceText = ""
+
+    private var yuvPixels = IntArray(0)
+
+    @Volatile
+    private var unsupportedDeviceId = -1
 
     private var currentBitmap: Bitmap? = null
     private var lastProcessedFrameNs = 0L
@@ -115,7 +149,8 @@ class MainActivity : Activity() {
                 val fps = shown - lastStatsShown
                 lastStatsShown = shown
                 val rec = if (recording) getString(R.string.rec_suffix) else ""
-                setStatus(getString(R.string.status_live, fps, rec))
+                val size = streamMode?.sizeLabel ?: ""
+                setStatus(getString(R.string.status_live, size, fps, rec))
             } else {
                 lastStatsShown = shownFrames.get()
             }
@@ -271,21 +306,38 @@ class MainActivity : Activity() {
             rightMargin = dp(8)
         }
         root.addView(statusView, statusParams)
+        statusView.setOnClickListener { showInfoDialog() }
 
-        recordButton = Button(this).apply {
-            text = getString(R.string.rec)
-            isEnabled = false
+        fun barButton(label: String, onClick: () -> Unit) = Button(this).apply {
+            text = label
+            isAllCaps = false
             setTextColor(Color.WHITE)
             setBackgroundResource(R.drawable.bg_record_button)
             backgroundTintList = ColorStateList.valueOf(Color.rgb(74, 74, 74))
-            setOnClickListener { toggleRecording() }
+            setOnClickListener { onClick() }
+        }
+
+        modeButton = barButton(getString(R.string.mode)) { showModeDialog() }.apply { isEnabled = false }
+        photoButton = barButton(getString(R.string.photo)) { takePhoto() }.apply { isEnabled = false }
+        recordButton = barButton(getString(R.string.rec)) { toggleRecording() }.apply { isEnabled = false }
+
+        val bar = LinearLayout(this).apply {
+            controlBar = this
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        listOf(modeButton, photoButton, recordButton).forEach { button ->
+            bar.addView(button, LinearLayout.LayoutParams(dp(104), dp(48)).apply {
+                leftMargin = dp(6)
+                rightMargin = dp(6)
+            })
         }
         val recordParams = FrameLayout.LayoutParams(
-            dp(104),
-            dp(48),
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
             Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
         )
-        root.addView(recordButton, recordParams)
+        root.addView(bar, recordParams)
 
         root.setOnApplyWindowInsetsListener { _, insets ->
             val topInset: Int
@@ -304,9 +356,9 @@ class MainActivity : Activity() {
                 it.topMargin = topInset + dp(8)
                 statusView.layoutParams = it
             }
-            (recordButton.layoutParams as FrameLayout.LayoutParams).also {
+            (controlBar.layoutParams as FrameLayout.LayoutParams).also {
                 it.bottomMargin = bottomInset + dp(16)
-                recordButton.layoutParams = it
+                controlBar.layoutParams = it
             }
             insets
         }
@@ -372,7 +424,9 @@ class MainActivity : Activity() {
             return
         }
 
-        val device = usbManager.deviceList.values.firstOrNull { isRotg02(it) }
+        val devices = usbManager.deviceList.values
+        val device = devices.firstOrNull { isRotg02(it) }
+            ?: devices.firstOrNull { hasVideoStreaming(it) }
         if (device == null) {
             if (!streamRunning) {
                 setStatus(getString(R.string.status_not_connected))
@@ -382,6 +436,8 @@ class MainActivity : Activity() {
         }
 
         Log.d(TAG, "scanAndConnect($reason): id=${device.deviceId}, permission=${usbManager.hasPermission(device)}")
+
+        if (device.deviceId == unsupportedDeviceId) return
 
         if (!usbManager.hasPermission(device)) {
             requestUsbPermission(device)
@@ -446,6 +502,7 @@ class MainActivity : Activity() {
             var connection: UsbDeviceConnection? = null
             var streamingInterface: UsbInterface? = null
             var claimed = false
+            var failed = false
             val deviceId = device.deviceId
 
             try {
@@ -456,12 +513,31 @@ class MainActivity : Activity() {
                     throw IllegalStateException("openDevice() returned null")
                 }
 
-                streamingInterface = findStreamingInterface(device)
-                    ?: throw IllegalStateException("VideoStreaming interface 1/alt0 not found")
+                val raw = connection.rawDescriptors
+                    ?: throw IllegalStateException("USB descriptors could not be read")
+                val infos = UvcDescriptors.parse(raw)
+                deviceText = describeDevice(device) + infos.joinToString("\n") { it.describe() }
+
+                val info = infos.firstOrNull { it.usable }
+                if (info == null) {
+                    mainHandler.post { if (foreground) setStatus(getString(R.string.status_unsupported)) }
+                    lastNativeLog = "No VideoStreaming interface with MJPEG or YUY2 and a usable endpoint."
+                    unsupportedDeviceId = deviceId
+                    return@execute
+                }
+                val mode = selectedMode(device, info)
+                    ?: throw IllegalStateException("No supported video mode")
+                streamInfo = info
+                streamMode = mode
+                lastJpeg = null
+                mainHandler.post { modeButton.text = mode.sizeLabel; modeButton.isEnabled = true }
+
+                streamingInterface = findStreamingInterface(device, info.interfaceNumber)
+                    ?: throw IllegalStateException("VideoStreaming interface ${info.interfaceNumber}/alt0 not found")
 
                 claimed = connection.claimInterface(streamingInterface, true)
                 if (!claimed) {
-                    throw IllegalStateException("claimInterface(if=1, force=true) failed")
+                    throw IllegalStateException("claimInterface(if=${info.interfaceNumber}, force=true) failed")
                 }
 
                 NativeUvcStream.prepareStream()
@@ -470,10 +546,21 @@ class MainActivity : Activity() {
                     return@execute
                 }
 
-                val summary = NativeUvcStream.runStream(connection.fileDescriptor, frameSink)
+                val summary = NativeUvcStream.runStream(
+                    connection.fileDescriptor,
+                    frameSink,
+                    info.nativeConfig(mode)
+                )
+                lastNativeLog = summary
                 Log.i(TAG, summary)
+                if (!summary.contains("Stream ended")) {
+                    failed = true
+                    mainHandler.post { if (foreground) setStatus(getString(R.string.status_stream_error)) }
+                }
             } catch (t: Throwable) {
                 Log.e(TAG, "Stream error", t)
+                lastNativeLog = "Stream error: ${t.message ?: t.javaClass.simpleName}"
+                failed = true
                 mainHandler.post {
                     if (foreground) setStatus(getString(R.string.status_stream_error))
                 }
@@ -496,9 +583,10 @@ class MainActivity : Activity() {
 
                 mainHandler.post {
                     recordButton.isEnabled = false
+                    photoButton.isEnabled = false
                     if (recording) stopRecording("Stream ended")
-                    if (foreground) {
-                        mainHandler.postDelayed({ scanAndConnect("stream end") }, 750)
+                    if (foreground && unsupportedDeviceId != deviceId) {
+                        mainHandler.postDelayed({ scanAndConnect("stream end") }, if (failed) 3000L else 750L)
                     }
                 }
             }
@@ -512,11 +600,11 @@ class MainActivity : Activity() {
         NativeUvcStream.stopStream()
     }
 
-    private fun findStreamingInterface(device: UsbDevice): UsbInterface? {
+    private fun findStreamingInterface(device: UsbDevice, interfaceNumber: Int): UsbInterface? {
         for (i in 0 until device.interfaceCount) {
             val intf = device.getInterface(i)
             if (
-                intf.id == 1 &&
+                intf.id == interfaceNumber &&
                 intf.alternateSetting == 0 &&
                 intf.interfaceClass == USB_CLASS_VIDEO &&
                 intf.interfaceSubclass == UVC_SUBCLASS_VIDEOSTREAMING
@@ -543,11 +631,17 @@ class MainActivity : Activity() {
             }
             lastProcessedFrameNs = frame.timestampNs
 
+            val mode = streamMode ?: continue
             val bitmap = try {
-                BitmapFactory.decodeByteArray(frame.jpeg, 0, frame.jpeg.size)
+                if (mode.kind == UvcFrameMode.KIND_YUY2) {
+                    yuy2ToBitmap(frame.jpeg, mode.width, mode.height)
+                } else {
+                    BitmapFactory.decodeByteArray(frame.jpeg, 0, frame.jpeg.size)
+                }
             } catch (_: Throwable) {
                 null
             } ?: continue
+            if (mode.kind == UvcFrameMode.KIND_MJPEG) lastJpeg = frame.jpeg
 
             val activeRecorder = recorder
             if (activeRecorder != null) {
@@ -589,6 +683,7 @@ class MainActivity : Activity() {
         imageView.setImageBitmap(bitmap)
         shownFrames.incrementAndGet()
         recordButton.isEnabled = streamRunning
+        photoButton.isEnabled = streamRunning
 
         if (old != null && old !== bitmap) {
             mainHandler.postDelayed({
@@ -610,7 +705,9 @@ class MainActivity : Activity() {
             return
         }
 
-        val newRecorder = Mp4Recorder(this)
+        val bmp = currentBitmap ?: return
+        val fps = (streamMode?.fps ?: 30.0).toInt().coerceIn(5, 30)
+        val newRecorder = Mp4Recorder(this, bmp.width, bmp.height, fps)
         try {
             val target = newRecorder.start()
             recorder = newRecorder
@@ -671,6 +768,150 @@ class MainActivity : Activity() {
         } else {
             mainHandler.post { statusView.text = text }
         }
+    }
+
+    private fun hasVideoStreaming(device: UsbDevice): Boolean =
+        (0 until device.interfaceCount).any {
+            val intf = device.getInterface(it)
+            intf.interfaceClass == USB_CLASS_VIDEO && intf.interfaceSubclass == UVC_SUBCLASS_VIDEOSTREAMING
+        }
+
+    private fun prefKey(device: UsbDevice) = "%04x:%04x".format(device.vendorId, device.productId)
+
+    private fun selectedMode(device: UsbDevice, info: UvcStreamInfo): UvcFrameMode? {
+        val saved = getSharedPreferences(PREFS, MODE_PRIVATE).getString(prefKey(device), null)
+        return info.modes.firstOrNull { it.key == saved } ?: info.defaultMode()
+    }
+
+    private fun describeDevice(device: UsbDevice): String = buildString {
+        append("%04x:%04x".format(device.vendorId, device.productId))
+        device.manufacturerName?.let { append("  ").append(it) }
+        device.productName?.let { append("  ").append(it) }
+        append('\n')
+    }
+
+    private fun showModeDialog() {
+        val info = streamInfo ?: return
+        val current = streamMode
+        val modes = info.modes
+        val labels = modes.map { it.label() }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.mode_title)
+            .setSingleChoiceItems(labels, modes.indexOf(current)) { dialog, which ->
+                dialog.dismiss()
+                val chosen = modes[which]
+                if (chosen == current) return@setSingleChoiceItems
+                val device = usbManager.deviceList.values.firstOrNull { it.deviceId == activeDeviceId }
+                if (device != null) {
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                        .putString(prefKey(device), chosen.key).apply()
+                }
+                stopRecording("Mode change")
+                stopStreaming()
+                setStatus(getString(R.string.status_connecting))
+            }
+            .show()
+    }
+
+    private fun showInfoDialog() {
+        val text = buildString {
+            append(deviceText.ifBlank { getString(R.string.info_no_device) })
+            if (lastNativeLog.isNotBlank()) {
+                append("\n").append(lastNativeLog)
+            }
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.info_title)
+            .setMessage(text)
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+    }
+
+    private fun yuy2ToBitmap(data: ByteArray, width: Int, height: Int): Bitmap? {
+        val count = width * height
+        if (data.size < count * 2) return null
+        if (yuvPixels.size != count) yuvPixels = IntArray(count)
+        val out = yuvPixels
+        var src = 0
+        var dst = 0
+        while (dst < count) {
+            val y0 = (data[src].toInt() and 0xff) - 16
+            val u = (data[src + 1].toInt() and 0xff) - 128
+            val y1 = (data[src + 2].toInt() and 0xff) - 16
+            val v = (data[src + 3].toInt() and 0xff) - 128
+            val rv = 409 * v
+            val gv = -100 * u - 208 * v
+            val bu = 516 * u
+            out[dst] = yuvPixel(298 * y0, rv, gv, bu)
+            out[dst + 1] = yuvPixel(298 * y1, rv, gv, bu)
+            src += 4
+            dst += 2
+        }
+        return Bitmap.createBitmap(out, width, height, Bitmap.Config.ARGB_8888)
+    }
+
+    private fun yuvPixel(y: Int, rv: Int, gv: Int, bu: Int): Int {
+        val r = ((y + rv + 128) shr 8).coerceIn(0, 255)
+        val g = ((y + gv + 128) shr 8).coerceIn(0, 255)
+        val b = ((y + bu + 128) shr 8).coerceIn(0, 255)
+        return (0xff shl 24) or (r shl 16) or (g shl 8) or b
+    }
+
+    private fun takePhoto() {
+        val jpeg = lastJpeg
+        val bitmap = currentBitmap
+        if (jpeg == null && bitmap == null) {
+            Toast.makeText(this, getString(R.string.toast_no_live_view), Toast.LENGTH_SHORT).show()
+            return
+        }
+        // MJPEG: save the camera's own JPEG unchanged. YUY2: encode the current frame.
+        val bytes = jpeg ?: run {
+            val stream = java.io.ByteArrayOutputStream()
+            bitmap!!.compress(Bitmap.CompressFormat.JPEG, 95, stream)
+            stream.toByteArray()
+        }
+        recordFinalizeExecutor.execute {
+            val saved = try {
+                savePhoto(bytes)
+            } catch (t: Throwable) {
+                Log.e(TAG, "Photo save failed", t)
+                null
+            }
+            mainHandler.post {
+                val msg = if (saved != null) getString(R.string.toast_saved, saved)
+                else getString(R.string.toast_photo_failed)
+                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun savePhoto(bytes: ByteArray): String {
+        val name = "IMG-" + SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US).format(Date()) + ".jpg"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, name)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/ROTG02")
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+            val resolver = contentResolver
+            val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                ?: throw IllegalStateException("MediaStore could not create an image")
+            try {
+                resolver.openOutputStream(uri)?.use { it.write(bytes) }
+                    ?: throw IllegalStateException("Image could not be opened")
+                resolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
+            } catch (t: Throwable) {
+                resolver.delete(uri, null, null)
+                throw t
+            }
+            return "Pictures/ROTG02/$name"
+        }
+        val base = getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: filesDir
+        val dir = File(base, "ROTG02").apply { mkdirs() }
+        val file = File(dir, name)
+        FileOutputStream(file).use { it.write(bytes) }
+        return file.absolutePath
     }
 
     private fun isRotg02(device: UsbDevice): Boolean =

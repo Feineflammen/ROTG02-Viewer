@@ -53,7 +53,10 @@ class Mp4Recorder(
                     MediaFormat.KEY_COLOR_FORMAT,
                     MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible
                 )
-                setInteger(MediaFormat.KEY_BIT_RATE, 2_500_000)
+                setInteger(
+                    MediaFormat.KEY_BIT_RATE,
+                    (width.toLong() * height * nominalFps / 10).coerceIn(2_500_000L, 20_000_000L).toInt()
+                )
                 setInteger(MediaFormat.KEY_FRAME_RATE, nominalFps)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
             }

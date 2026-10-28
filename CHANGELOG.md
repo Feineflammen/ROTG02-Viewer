@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.0.0
+
+Generic UVC camera support.
+
+- any USB Video Class device is detected, the ROTG02 is still preferred
+- formats, resolutions, frame intervals and endpoints are read from the USB descriptors instead of fixed ROTG02 constants
+- MJPEG and uncompressed YUY2 streams
+- isochronous and bulk transfer cameras
+- alternate setting chosen from the negotiated payload size
+- UVC 1.0, 1.1 and 1.5 probe layouts (falls back to 26 bytes)
+- frames are also closed on FID toggle for cameras that never set EOF; trailing zero padding after JPEG EOI is accepted
+- MODE button: choose resolution, remembered per camera (VID:PID)
+- PHOTO button: saves the camera's original JPEG (MJPEG) to Pictures/ROTG02
+- recording uses the live resolution and scales the bitrate
+- tap the status line for camera details and the last stream log
+
 ## 1.1.0
 
 Public-readiness and UI cleanup.

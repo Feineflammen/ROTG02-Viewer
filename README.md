@@ -1,6 +1,6 @@
 # ROTG02 Viewer
 
-A focused Android FPV viewer for the **Eachine ROTG02** USB receiver (`VID:PID 18EC:5850`).
+An Android viewer for the **Eachine ROTG02** USB receiver (`VID:PID 18EC:5850`) and, since 2.0.0, other USB Video Class (UVC) cameras that stream MJPEG or YUY2.
 
 The app uses a small native UVC/USB isochronous transport written specifically for the ROTG02 instead of a general-purpose UVC framework.
 
@@ -123,11 +123,11 @@ GitHub Actions builds an optimized release variant from scratch using:
 
 The CI workflow disables the Gradle build cache, reruns all tasks, verifies the APK signature, checks package/version metadata, audits permissions, and inspects native dependencies/imports for unexpected network or process-control functionality.
 
-Current version: **1.1.0**
+Current version: **2.0.0**
 
 CI artifact:
 
-- `ROTG02-Viewer-v1.1.0-release-audited`
+- `ROTG02-Viewer-v2.0.0-release-audited`
 
 ### Signing note
 
@@ -147,9 +147,11 @@ The GitHub Actions workflow is the reference build path used for audited test ar
 
 ## Scope
 
-This project intentionally targets the Eachine ROTG02 rather than attempting to be a generic Android UVC camera application.
+The ROTG02 remains the reference device and is preferred when several cameras are connected.
+Other UVC cameras are configured from their own USB descriptors: format, resolution, frame interval,
+alternate setting or bulk endpoint. H.264 and frame-based formats are not supported.
 
-Device constants and UVC negotiation values are therefore deliberately specific to this receiver.
+Tap the status line to see the parsed descriptors and the last native stream log.
 
 ## Version history
 

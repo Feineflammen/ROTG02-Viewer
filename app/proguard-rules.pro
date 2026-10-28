@@ -3,5 +3,5 @@
 -keep class de.feineflammen.rotg02viewer.NativeUvcStream { *; }
 -keep class de.feineflammen.rotg02viewer.FrameSink { *; }
 -keepclassmembers class de.feineflammen.rotg02viewer.FrameSink {
-    public void onJpegFrame(byte[], long);
+    public void onFrame(byte[], long);
 }

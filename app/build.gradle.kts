@@ -11,8 +11,8 @@ android {
         applicationId = "de.feineflammen.rotg02viewer"
         minSdk = 23
         targetSdk = 36
-        versionCode = 4
-        versionName = "1.1.0"
+        versionCode = 5
+        versionName = "2.0.0"
 
         externalNativeBuild {
             cmake {
