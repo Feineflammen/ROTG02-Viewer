@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
@@ -109,6 +110,11 @@ class MainActivity : Activity() {
     private var deviceText = ""
 
     private var yuvPixels = IntArray(0)
+
+    private var insetLeft = 0
+    private var insetTop = 0
+    private var insetRight = 0
+    private var insetBottom = 0
 
     @Volatile
     private var unsupportedDeviceId = -1
@@ -321,50 +327,83 @@ class MainActivity : Activity() {
         photoButton = barButton(getString(R.string.photo)) { takePhoto() }.apply { isEnabled = false }
         recordButton = barButton(getString(R.string.rec)) { toggleRecording() }.apply { isEnabled = false }
 
-        val bar = LinearLayout(this).apply {
-            controlBar = this
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-        }
+        controlBar = LinearLayout(this).apply { gravity = Gravity.CENTER }
         listOf(modeButton, photoButton, recordButton).forEach { button ->
-            bar.addView(button, LinearLayout.LayoutParams(dp(104), dp(48)).apply {
-                leftMargin = dp(6)
-                rightMargin = dp(6)
-            })
+            controlBar.addView(button, LinearLayout.LayoutParams(dp(104), dp(48)))
         }
-        val recordParams = FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        root.addView(
+            controlBar,
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         )
-        root.addView(bar, recordParams)
 
         root.setOnApplyWindowInsetsListener { _, insets ->
-            val topInset: Int
-            val bottomInset: Int
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                topInset = insets.getInsets(WindowInsets.Type.statusBars()).top
-                bottomInset = insets.getInsets(WindowInsets.Type.navigationBars()).bottom
+                val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                insetLeft = bars.left
+                insetTop = bars.top
+                insetRight = bars.right
+                insetBottom = bars.bottom
             } else {
                 @Suppress("DEPRECATION")
-                topInset = insets.systemWindowInsetTop
+                insetLeft = insets.systemWindowInsetLeft
                 @Suppress("DEPRECATION")
-                bottomInset = insets.systemWindowInsetBottom
+                insetTop = insets.systemWindowInsetTop
+                @Suppress("DEPRECATION")
+                insetRight = insets.systemWindowInsetRight
+                @Suppress("DEPRECATION")
+                insetBottom = insets.systemWindowInsetBottom
             }
-
-            (statusView.layoutParams as FrameLayout.LayoutParams).also {
-                it.topMargin = topInset + dp(8)
-                statusView.layoutParams = it
-            }
-            (controlBar.layoutParams as FrameLayout.LayoutParams).also {
-                it.bottomMargin = bottomInset + dp(16)
-                controlBar.layoutParams = it
-            }
+            applyLayout()
             insets
         }
 
         setContentView(root)
+        applyLayout()
         root.requestApplyInsets()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        applyLayout()
+    }
+
+    /** Portrait: buttons in a row at the bottom. Landscape: a column at the right edge. */
+    private fun applyLayout() {
+        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+        (statusView.layoutParams as FrameLayout.LayoutParams).also {
+            it.topMargin = insetTop + dp(8)
+            it.leftMargin = insetLeft + dp(8)
+            it.rightMargin = insetRight + dp(8)
+            statusView.layoutParams = it
+        }
+
+        controlBar.orientation = if (landscape) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+        for (i in 0 until controlBar.childCount) {
+            val child = controlBar.getChildAt(i)
+            (child.layoutParams as LinearLayout.LayoutParams).also {
+                it.setMargins(
+                    if (landscape) 0 else dp(6),
+                    if (landscape) dp(6) else 0,
+                    if (landscape) 0 else dp(6),
+                    if (landscape) dp(6) else 0
+                )
+                child.layoutParams = it
+            }
+        }
+
+        (controlBar.layoutParams as FrameLayout.LayoutParams).also {
+            if (landscape) {
+                it.gravity = Gravity.END or Gravity.CENTER_VERTICAL
+                it.rightMargin = insetRight + dp(16)
+                it.bottomMargin = 0
+            } else {
+                it.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                it.rightMargin = 0
+                it.bottomMargin = insetBottom + dp(16)
+            }
+            controlBar.layoutParams = it
+        }
     }
 
     private fun ensureCameraPermissionThenScan() {
