@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
 
     steps:
       - name: Checkout exact commit
@@ -113,3 +113,17 @@ jobs:
             native-dependencies.txt
             native-imports.txt
           if-no-files-found: error
+
+      - name: Publish pre-release (download without login)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v2.0.0-build${{ github.run_number }}"
+          gh release create "$TAG" \
+            ROTG02-Viewer-v2.0.0-release.apk \
+            ROTG02-Viewer-v2.0.0-release.apk.sha256 \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "ROTG02 Viewer 2.0.0 (build ${{ github.run_number }}, ${GITHUB_REF_NAME})" \
+            --notes "Automatic test build from commit $GITHUB_SHA on branch ${GITHUB_REF_NAME}. Signed with the debug/test key, not an official release."
